@@ -1,18 +1,88 @@
-This was written in a bit of a time crunch, so sorry for any confusion that is caused. in case of any questions, email: nikasha.datiashvili@gmail.com
-to use it simply put all three attached files into a program with a recent python interpreter installed.
-this is a pretty simple program, that serves to imitate Karel, Stanford University's robot, which makes learning python fun and easy. 
-the program reads the .csv file named "world.csv" and exctracts information about the starting world from there. more about editing the starting world later.
+# Karel-Engine
 
-to look at the starting world, run the Karel.py file and the 2d world will be printed.
+A text-based engine for Karel the Robot, the robot Stanford uses to teach programming basics. You describe a world in a CSV file, write a Karel program in Python, and watch Karel move through the world as an animated ASCII grid in your terminal.
 
-Karel has 4 default functions built into her: move(), turn_left(), put_beeper(), and pick_beeper(). in Stanford's course, this is enough to get students accustomed to solving complex problems using only these four functions.
+```
++---+---+---+---+---+
+| 1                 |
++   +   +   +   +   +
+|                   |
++   +   +---+   +   +
+| K             | 2 |
++---+---+---+---+---+
+```
 
-currently, in world.csv, Karel starts out facing East (right), which can be edited in the metadata by changing the E to N,S, or W. (the program contains all necessary metadata in the first line of the .csv file)
+Karel is shown as `K`, and beepers (objects Karel can pick up and put down) are shown as numbers. No dependencies, just Python 3.
 
-Karel is indicated on the grid with the letter K, while beepers are indicated with numbers. beepers are just an object Karel can place that helps her solve more complex tasks.
+## Running
 
-to use the program, simply input the functions you want Karel to use into the "user_program.py" file and press run on the "Karel.py" file.
+```bash
+python Karel.py                          # runs user_program.py in world.csv
+python Karel.py my_world.csv my_prog.py  # custom world and program
+python Karel.py examples/hurdles.csv examples/hurdles.py
+```
 
-an example of the problems Stanford's course asks you to solve is "Midpoint Karel". they task you with making a program that can find the middle point of the bottom row of any world. it tests you by giving you strange edge cases (like a 1x1 world) and giving you worlds with an even number tile width, meaning you need to fit your program for any possible scenario, and realize how to use your resources appropriately.
+The hurdles example has Karel jump walls of different heights, collect every beeper on the way and drop them in a pile at the finish.
 
-to edit the starting world, there are a few specifics to the csv file. the current one has three grids. the first one serves to indicate Karel's position, the second indicates which tile has wall(s) (here each tile can have no value, or a 4 character long string of digits 0000, 0100, 0001 ,0111, and so on. flipping the first 0 to a 1 indicates a north wall on that tile, the second one indicates a west wall, the third - south, and the fourth - east). the third grid corresponds to the amount of beepers on the grid, indicated by integers. because of the way the program is displayed in print, it is recommended to not go past 99 beepers, because, if the program had to print Karel and 100 beepers together (K100) that is a 4 character long string that wouldnt fit within the walls.
+If Karel hits a wall, picks up a beeper that isn't there, or puts one down with an empty bag, the program stops with an error message.
+
+## Writing a Karel program
+
+Write your program in `user_program.py`:
+
+```python
+def main():
+    while front_is_clear():
+        move()
+    put_beeper()
+
+if __name__ == '__main__':
+    main()
+```
+
+Karel has 4 built-in actions. In Stanford's course, these are enough to get students solving complex problems by combining them with conditions and their own helper functions. Programs can only use the commands below. The engine's internals are not visible to them.
+
+| Actions | Conditions |
+|---|---|
+| `move()` | `front_is_clear()` / `front_is_blocked()` |
+| `turn_left()` | `left_is_clear()` / `left_is_blocked()` |
+| `put_beeper()` | `right_is_clear()` / `right_is_blocked()` |
+| `pick_beeper()` | `facing_north()` / `not_facing_north()` (also `south`, `east`, `west`) |
+| | `beepers_present()` / `no_beepers_present()` |
+| | `beepers_in_bag()` / `no_beepers_in_bag()` |
+
+A good problem to try is Stanford's "Midpoint Karel": write a program that finds the middle of the bottom row in *any* world. It has to handle edge cases like a 1x1 world and worlds with an even width, so you need a solution that works for every possible world, not just the one in front of you.
+
+## World file format
+
+A world file has three sections separated by blank lines:
+
+```
+Karel Metadata,E,inf,""     <- starting direction (N/E/S/W), beepers in bag (number or inf)
+0,0,0,0,0                   <- grid: K marks Karel's start, every other cell is 0
+0,0,0,0,0
+K,0,0,0,0
+
+,,,,                        <- walls: one cell per grid cell, blank means no walls
+,,0010,,                       otherwise four 0/1 digits in N W S E order
+,,,0001,                       (0001 = wall on the east side of that cell)
+
+B                           <- beepers: number of beepers on each cell
+1,0,0,0,0
+0,0,0,0,0
+0,0,0,0,2
+```
+
+A wall only needs to be recorded on one side of an edge. Karel can't cross it from either direction.
+
+Keep beeper counts under 100 per cell. Each cell is 3 characters wide, so Karel standing on 100 beepers (`K100`) wouldn't fit between the walls.
+
+## Project structure
+
+- `Karel.py`: the engine. `load_world` reads the world file into a single `state` dictionary (grid, Karel, walls, beepers) that every command receives. `run_user_code` runs a program with only the Karel commands available, with `state` already filled in so programs can call plain `move()`.
+- `world.csv`, `user_program.py`: a starting world and an empty program to fill in.
+- `examples/`: a larger example with walls and beepers.
+
+## Contact
+
+Questions? Email nikasha.datiashvili@gmail.com

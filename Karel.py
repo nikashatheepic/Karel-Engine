@@ -1,70 +1,61 @@
+import functools
+import sys
 import time
 
-operating_world = None
-karel = {}
-walls = None
-beepers = []
+class KarelError(Exception):
+    pass
 
-def create_world():
-    global karel
-    with open("world.csv", "r") as f:
-        import_world = f.read()
 
-    lines = import_world.strip().split("\n")
+def find_blank_line(lines):
+    for i in range(len(lines)):
+        if lines[i].strip() == "":
+            return i
 
+
+def create_world(lines):
+    karel = {}
     karel["direction"] = lines[0].split(',')[1]
+    if karel["direction"] not in ("N", "E", "S", "W"):
+        raise ValueError(f"Starting direction must be N, E, S or W, not {karel['direction']!r}")
+
     karel["beepers"] = lines[0].split(',')[2]
     if karel["beepers"] == "inf":
         karel["beepers"] = float("inf")
+    else:
+        karel["beepers"] = int(karel["beepers"])
 
-    for i in range(len(lines)):
-        if lines[i].strip() == "":
-            wall_grid_row = i
-            break
+    wall_grid_row = find_blank_line(lines)
 
     world = []
     for line in lines[1:wall_grid_row]:
         world.append(line.split(","))
 
-    return world
+    return world, karel
 
-def copy_world():
-    global operating_world
-    world = create_world()
-    operating_world = [row[:] for row in world]
-
-def extract_ycoordinate():
-    global operating_world
-    for i in range(len(operating_world)):
-        if "K" in operating_world[i]:
+def extract_ycoordinate(world):
+    y = None
+    for i in range(len(world)):
+        if "K" in world[i]:
             y = i+1
     return y
 
-def extract_xcoordinate(y):
-    global operating_world
-    for i in range(len(operating_world[y-1])):
-        if "K" in operating_world[y-1][i]:  # use "in" to match like y-coordinate
+def extract_xcoordinate(world, y):
+    for i in range(len(world[y-1])):
+        if "K" in world[y-1][i]:
             return i+1
 
-def prepare_karel():
-    global karel
-    karel_y = extract_ycoordinate()
-    karel_x = extract_xcoordinate(karel_y)
+def prepare_karel(state):
+    karel_y = extract_ycoordinate(state["world"])
+    if karel_y is None:
+        raise ValueError("The world needs a K to show where Karel starts")
+    karel_x = extract_xcoordinate(state["world"], karel_y)
 
-    karel["row"] = karel_y
-    karel["col"] = karel_x
+    state["karel"]["row"] = karel_y
+    state["karel"]["col"] = karel_x
 
-def build_walls():
-    global walls
-    with open("world.csv", "r") as f:
-        lines = f.read().splitlines()
-
-    for i in range(len(lines)):
-        if lines[i].strip() == "":
-            wall_grid_row = i
-            break
-    B_index = lines.index("B")
-    wall_lines = lines[wall_grid_row + 1: B_index]
+def build_walls(lines, rows):
+    wall_grid_row = find_blank_line(lines)
+    wall_lines = lines[wall_grid_row + 1: wall_grid_row + 1 + rows]
 
     walls = []
     for line in wall_lines:
@@ -73,67 +64,77 @@ def build_walls():
         for cell in cells:
             if cell.strip() == "":
                 row.append([0, 0, 0, 0])  # blank cell → all zeros
-            else:
+            elif len(cell) == 4 and all(d in "01" for d in cell):
                 row.append([int(d) for d in cell])  # '0100' → [0,1,0,0]
+            else:
+                raise ValueError(f"Wall cell {cell!r} should be four 0/1 digits in N W S E order")
         walls.append(row)
+    return walls
 
-def build_beepers():
-    global beepers
-    with open("world.csv", "r") as f:
-        lines = f.read().splitlines()
-
+def build_beepers(lines, rows):
     B_index = lines.index("B")
-    beepers_lines = lines[B_index + 1:]
+    beepers_lines = lines[B_index + 1: B_index + 1 + rows]
 
+    beepers = []
     for i in range(len(beepers_lines)):
         beepers.append([int(x) for x in beepers_lines[i].split(",")])
+    return beepers
 
-def move():
-    global operating_world, karel
+def check_sizes(state):
+    rows = len(state["world"])
+    cols = len(state["world"][0])
+    for name in ("walls", "beepers"):
+        section = state[name]
+        if len(section) != rows or any(len(row) != cols for row in section):
+            raise ValueError(f"The {name} section should be {rows} rows by {cols} columns, the same as the grid")
+
+def load_world(filename="world.csv"):
+    with open(filename, "r") as f:
+        return build_state(f.read().splitlines())
+
+def build_state(lines):
+    world, karel = create_world(lines)
+    state = {
+        "world": world,
+        "karel": karel,
+        "walls": build_walls(lines, len(world)),
+        "beepers": build_beepers(lines, len(world)),
+        "delay": 0.25,
+    }
+    check_sizes(state)
+    prepare_karel(state)
+    return state
+
+def move(state):
+    world = state["world"]
+    karel = state["karel"]
+
+    if front_is_clear(state) is False:
+        raise KarelError(f"Blocked by wall at row {karel['row']}, column {karel['col']}, facing {karel['direction']}")
 
     r = karel["row"] - 1
     c = karel["col"] - 1
     d = karel["direction"]
 
     if d == "E":
-        if c < len(operating_world[r]) - 1 and walls[r][c][3] == 0 and walls[r][c+1][1] == 0:
-            new_r = r
-            new_c = c + 1
-        else:
-            print('Blocked by wall')
-            return
+        new_r, new_c = r, c + 1
     elif d == "W":
-        if c > 0 and walls[r][c][1] == 0 and walls[r][c-1][3] == 0:
-            new_r = r
-            new_c = c - 1
-        else:
-            print('Blocked by wall')
-            return
+        new_r, new_c = r, c - 1
     elif d == "N":
-        if r > 0 and walls[r][c][0] == 0 and walls[r-1][c][2] == 0:
-            new_r = r - 1
-            new_c = c
-        else:
-            print('Blocked by wall')
-            return
+        new_r, new_c = r - 1, c
     elif d == "S":
-        if r < len(operating_world) - 1 and walls[r][c][2] == 0 and walls[r+1][c][0] == 0:
-            new_r = r + 1
-            new_c = c
-        else:
-            print('Blocked by wall')
-            return
+        new_r, new_c = r + 1, c
 
-    print_current_world()
-
-    operating_world[r][c] = '0'
-    operating_world[new_r][new_c] = "K"
+    world[r][c] = '0'
+    world[new_r][new_c] = "K"
 
     karel["row"] = new_r + 1
     karel["col"] = new_c + 1
 
-def turn_left():
-    global karel
+    print_current_world(state)
+
+def turn_left(state):
+    karel = state["karel"]
     if karel["direction"] == "E":
         karel["direction"] = "N"
     elif karel["direction"] == "N":
@@ -143,80 +144,63 @@ def turn_left():
     elif karel["direction"] == "S":
         karel["direction"] = "E"
 
-def put_beeper():
-    global beepers
+def put_beeper(state):
+    karel = state["karel"]
     r = karel["row"] - 1
     c = karel["col"] - 1
     if karel["beepers"] > 0:
-        beepers[r][c] += 1
+        state["beepers"][r][c] += 1
         karel["beepers"] -= 1
     else:
-        return
+        raise KarelError("No beepers left in the bag")
 
-    print_current_world()
+    print_current_world(state)
 
-def pick_beeper():
-    global beepers
+def pick_beeper(state):
+    karel = state["karel"]
     r = karel["row"] - 1
     c = karel["col"] - 1
-    if beepers[r][c] > 0:
-        beepers[r][c] -= 1
+    if state["beepers"][r][c] > 0:
+        state["beepers"][r][c] -= 1
         karel["beepers"] += 1
+    else:
+        raise KarelError(f"No beeper to pick up at row {karel['row']}, column {karel['col']}")
 
-    print_current_world()
+    print_current_world(state)
 
-def load_user_program(filename="user_program.py"):
-    with open(filename, "r") as f:
-        code = f.read()
-    exec(code, globals())
-
-def main():
-    copy_world()
-    build_walls()
-    prepare_karel()
-    build_beepers()
-    print_current_world()
-
-    load_user_program()
-
-    print_current_world()
-
-def print_first_row():
-    global karel
+def print_border(state):
     current_row = ""
-    if operating_world is None:
-        return
-    for j in range(len(operating_world[0])):
+    for j in range(len(state["world"][0])):
         current_row += "+---"
     current_row += "+"
     print(current_row)
 
-def print_middle_rows():
-    global walls, operating_world
-    for i in range(len(operating_world)*2):
+def print_middle_rows(state):
+    for i in range(len(state["world"])*2):
         karel_row = i//2
         if i % 2 != 0:
-            print_karel_row(karel_row)
+            print_karel_row(state, karel_row)
         else:
-            print_wall_row(karel_row)
-    return karel_row
+            print_wall_row(state, karel_row)
 
-def print_karel_row(karel_row):
-    global operating_world, walls
+def print_karel_row(state, karel_row):
+    world = state["world"]
+    walls = state["walls"]
+    beepers = state["beepers"]
 
     current_row = ""
-    for j in range(len(operating_world[karel_row])):
+    for j in range(len(world[karel_row])):
 
         if j == 0 or walls[karel_row][j][1] == 1 or walls[karel_row][j - 1][3] == 1:
             current_row += "|"
         else:
             current_row += " "
 
-        if operating_world[karel_row][j] == 'K' and beepers[karel_row][j] > 0:
+        if world[karel_row][j] == 'K' and beepers[karel_row][j] > 0:
             cell_content = f"K{beepers[karel_row][j]}"
-        elif operating_world[karel_row][j] == 'K' and beepers[karel_row][j] == 0:
+        elif world[karel_row][j] == 'K' and beepers[karel_row][j] == 0:
             cell_content = " K "
-        elif operating_world[karel_row][j] == '0' and beepers[karel_row][j] > 0:
+        elif world[karel_row][j] == '0' and beepers[karel_row][j] > 0:
             cell_content = f"{beepers[karel_row][j]}"
         else:
             cell_content = "   "
@@ -229,63 +213,40 @@ def print_karel_row(karel_row):
     current_row += "|"
     print(current_row)
 
-def print_wall_row(karel_row):
-    global walls
+def print_wall_row(state, karel_row):
+    walls = state["walls"]
+    if karel_row == 0:
+        return
+
     current_row = ""
     for j in range(len(walls[karel_row])):
-        if karel_row == 0:
-            return
+        if walls[karel_row][j][0] == 1 or walls[karel_row-1][j][2] == 1:
+            current_row += "+---"
         else:
-            if (walls[karel_row][j][0] == 1) or (j + 1 < len(walls[karel_row]) and walls[(karel_row-1)][j][2] == 1):
-                current_row += "+---"
-            else:
-                current_row += "+   "
+            current_row += "+   "
     current_row += "+"
     print(current_row)
 
-def print_last_row(karel_row):
-    global karel
-    current_row = ""
-    for j in range(len(walls[karel_row])):
-        current_row += "+---"
-    current_row += "+"
-    print(current_row)
-
-def print_current_world():
-    print_first_row()
-    print_middle_rows()
-    print_last_row(len(operating_world)-1)
+def print_current_world(state):
+    print_border(state)
+    print_middle_rows(state)
+    print_border(state)
     print()
-    time.sleep(0.25)
+    time.sleep(state["delay"])
 
-def front_is_clear():
-    r = karel["row"] - 1
-    c = karel["col"] - 1
-    d = karel["direction"]
-
+def can_move_in_direction(state, d):
+    world = state["world"]
+    walls = state["walls"]
+    r = state["karel"]["row"] - 1
+    c = state["karel"]["col"] - 1
     if d == "E":
-        if c < len(operating_world[r]) - 1 and walls[r][c][3] == 0 and walls[r][c + 1][1] == 0:
-            return True
-        else:
-            return False
+        return c < len(world[r]) - 1 and walls[r][c][3] == 0 and walls[r][c + 1][1] == 0
     elif d == "W":
-        if c > 0 and walls[r][c][1] == 0 and walls[r][c - 1][3] == 0:
-            return True
-        else:
-            return False
+        return c > 0 and walls[r][c][1] == 0 and walls[r][c - 1][3] == 0
     elif d == "N":
-        if r > 0 and walls[r][c][0] == 0 and walls[r-1][c][2] == 0:
-            return True
-        else:
-            return False
+        return r > 0 and walls[r][c][0] == 0 and walls[r - 1][c][2] == 0
     elif d == "S":
-        if r < len(operating_world) - 1 and walls[r][c][2] == 0 and walls[r+1][c][0] == 0:
-            return True
-        else:
-            return False
-
-def front_is_blocked():
-    return not front_is_clear()
+        return r < len(world) - 1 and walls[r][c][2] == 0 and walls[r + 1][c][0] == 0
 
 def left_of(d):
     return {"N": "W", "W": "S", "S": "E", "E": "N"}[d]
@@ -293,70 +254,96 @@ def left_of(d):
 def right_of(d):
     return {"N":"E", "E":"S", "S":"W", "W":"N"}[d]
 
-def can_move_in_direction(d):
-    r = karel["row"] - 1
-    c = karel["col"] - 1
-    if d == "E":
-        return c < len(operating_world[r]) - 1 and walls[r][c][3] == 0 and walls[r][c + 1][1] == 0
-    elif d == "W":
-        return c > 0 and walls[r][c][1] == 0 and walls[r][c - 1][3] == 0
-    elif d == "N":
-        return r > 0 and walls[r][c][0] == 0 and walls[r - 1][c][2] == 0
-    elif d == "S":
-        return r < len(operating_world) - 1 and walls[r][c][2] == 0 and walls[r + 1][c][0] == 0
+def front_is_clear(state):
+    return can_move_in_direction(state, state["karel"]["direction"])
 
-def left_is_clear():
-    return can_move_in_direction(left_of(karel["direction"]))
+def front_is_blocked(state):
+    return not front_is_clear(state)
 
-def right_is_clear():
-    return can_move_in_direction(right_of(karel["direction"]))
+def left_is_clear(state):
+    return can_move_in_direction(state, left_of(state["karel"]["direction"]))
 
-def left_is_blocked():
-    return not left_is_clear()
+def right_is_clear(state):
+    return can_move_in_direction(state, right_of(state["karel"]["direction"]))
 
-def right_is_blocked():
-    return not right_is_clear()
+def left_is_blocked(state):
+    return not left_is_clear(state)
 
-def facing_north():
-    return karel["direction"] == "N"
+def right_is_blocked(state):
+    return not right_is_clear(state)
 
-def not_facing_north():
-    return not facing_north()
+def facing_north(state):
+    return state["karel"]["direction"] == "N"
 
-def facing_south():
-    return karel["direction"] == "S"
+def not_facing_north(state):
+    return not facing_north(state)
 
-def not_facing_south():
-    return not facing_south()
+def facing_south(state):
+    return state["karel"]["direction"] == "S"
 
-def facing_east():
-    return karel["direction"] == "E"
+def not_facing_south(state):
+    return not facing_south(state)
 
-def not_facing_east():
-    return not facing_east()
+def facing_east(state):
+    return state["karel"]["direction"] == "E"
 
-def facing_west():
-    return karel["direction"] == "W"
+def not_facing_east(state):
+    return not facing_east(state)
 
-def not_facing_west():
-    return not facing_west()
+def facing_west(state):
+    return state["karel"]["direction"] == "W"
 
-def beepers_present():
-    r = karel["row"] - 1
-    c = karel["col"] - 1
-    if beepers[r][c] > 0:
-        return True
-    else:
-        return False
+def not_facing_west(state):
+    return not facing_west(state)
 
-def no_beepers_present():
-    return not beepers_present()
+def beepers_present(state):
+    r = state["karel"]["row"] - 1
+    c = state["karel"]["col"] - 1
+    return state["beepers"][r][c] > 0
 
-def beepers_in_bag():
-    return karel["beepers"] > 0
+def no_beepers_present(state):
+    return not beepers_present(state)
 
-def no_beepers_in_bag():
-    return not beepers_in_bag()
+def beepers_in_bag(state):
+    return state["karel"]["beepers"] > 0
+
+def no_beepers_in_bag(state):
+    return not beepers_in_bag(state)
+
+USER_COMMANDS = [
+    move, turn_left, put_beeper, pick_beeper,
+    front_is_clear, front_is_blocked, left_is_clear, left_is_blocked,
+    right_is_clear, right_is_blocked,
+    facing_north, not_facing_north, facing_south, not_facing_south,
+    facing_east, not_facing_east, facing_west, not_facing_west,
+    beepers_present, no_beepers_present, beepers_in_bag, no_beepers_in_bag,
+]
+
+def run_user_code(state, code, filename="<program>"):
+    commands = {"__name__": "__main__"}
+    for command in USER_COMMANDS:
+        commands[command.__name__] = functools.partial(command, state)
+    exec(compile(code, filename, "exec"), commands)
+
+def load_user_program(state, filename="user_program.py"):
+    with open(filename, "r") as f:
+        code = f.read()
+    run_user_code(state, code, filename)
+
+def main():
+    world_file = sys.argv[1] if len(sys.argv) > 1 else "world.csv"
+    program_file = sys.argv[2] if len(sys.argv) > 2 else "user_program.py"
+
+    state = load_world(world_file)
+    print_current_world(state)
+
+    try:
+        load_user_program(state, program_file)
+    except KarelError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print_current_world(state)
 
 if __name__ == "__main__":
     main()
