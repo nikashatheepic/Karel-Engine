@@ -1,6 +1,6 @@
 # Karel-Engine
 
-A text-based engine for Karel the Robot, the robot Stanford uses to teach programming basics. You describe a world in a CSV file, write a Karel program in Python, and watch Karel move through the world as an animated ASCII grid in your terminal.
+A text-based engine for Karel the Robot, the robot Stanford uses to teach programming basics. You describe a world in a CSV file, write a Karel program in Python, and watch Karel move through the world as an animated ASCII grid in your terminal. I built this while going through Stanford's Karel exercises during a university course to see if I could.
 
 ```
 +---+---+---+---+---+
